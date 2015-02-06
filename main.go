@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -8,7 +10,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"flag"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -17,8 +18,8 @@ type conf struct {
 	directory     string
 	url           string
 	verbose       bool
-	size		  int
-	parallel	  int
+	size          int
+	parallel      int
 	defaultDomain string
 }
 
@@ -113,7 +114,7 @@ func downloadImages(urls <-chan string, wg *sync.WaitGroup) {
 					}
 
 					wg.Add(1)
-					go downloadActualImage(config.defaultDomain + val, wg)
+					go downloadActualImage(config.defaultDomain+val, wg)
 				}
 			}
 		})
@@ -154,7 +155,11 @@ func parseArgs() {
 	args := flag.Args()
 
 	if len(args) < 2 {
-		log.Fatal("Usage: nagibackup <directory> <url>")
+		Usage()
+	}
+
+	if args[0] == "" || args[1] == "" {
+		Usage()
 	}
 
 	config.directory = args[0]
@@ -173,15 +178,10 @@ func initParallelSemaphore() {
 	}
 }
 
-func main() {
+func startDownloads() {
 	var wg sync.WaitGroup
 
-	initDefaults()
-
 	urls := make(chan string)
-
-	createDestinationDir()
-	initParallelSemaphore()
 
 	wg.Add(2)
 
@@ -189,4 +189,22 @@ func main() {
 	go downloadImages(urls, &wg)
 
 	wg.Wait()
+}
+
+var Usage = func() {
+	fmt.Fprintf(os.Stderr, "Usage: nagibackup [<options>...] <directory> <url>\n")
+	flag.PrintDefaults()
+	os.Exit(1)
+}
+
+func main() {
+	initDefaults()
+	parseArgs()
+
+	createDestinationDir()
+	initParallelSemaphore()
+
+	startDownloads()
+
+	os.Exit(0)
 }
