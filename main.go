@@ -67,10 +67,12 @@ func getActualImageUrl(url string) (image string) {
 
 	doc.Find("div table").Each(func(i int, s *goquery.Selection) {
 		el := s.Parent().Find("img")
-		if el != nil {
-			if val, ok := el.Attr("src"); ok {
-				image = val
-			}
+		if el == nil {
+			return
+		}
+
+		if val, ok := el.Attr("src"); ok {
+			image = val
 		}
 	})
 
@@ -102,22 +104,27 @@ func downloadImages(urls <-chan string, wg *sync.WaitGroup) {
 		}
 
 		doc.Find("#zoom ul li a").Each(func(i int, s *goquery.Selection) {
-			if val, ok := s.Attr("href"); !ok {
+			val, ok := s.Attr("href")
+			if !ok {
 				if config.verbose {
 					log.Print("Href not found, skipping")
 				}
-			} else {
-				// TODO: Convert to string from config.size
-				if strings.Contains(val, "size=o") {
-					if config.parallel > 0 {
-						// Blocks until one slot out of config.parallel is free.
-						semaphore <- struct{}{}
-					}
 
-					wg.Add(1)
-					go downloadActualImage(config.defaultDomain+val, wg)
-				}
+				return
 			}
+
+			// TODO: Select based on setting in config.size
+			if !strings.Contains(val, "size=o") {
+				return
+			}
+
+			if config.parallel > 0 {
+				// Blocks until one slot out of config.parallel is free.
+				semaphore <- struct{}{}
+			}
+
+			wg.Add(1)
+			go downloadActualImage(config.defaultDomain+val, wg)
 		})
 	}
 }
@@ -132,28 +139,38 @@ func printImages(urls <-chan string, wg *sync.WaitGroup) {
 
 func extractImageUrls(urls chan<- string, doc *goquery.Document) {
 	doc.Find("div.imagelog p a").Each(func(i int, s *goquery.Selection) {
-		if val, ok := s.Attr("href"); !ok {
+		val, ok := s.Attr("href")
+		if !ok {
 			if config.verbose {
 				log.Fatal("Href not found")
 			}
-		} else {
-			urls <- val
+
+			return
 		}
+
+		urls <- val
 	})
 }
 
 func extractNextUrl(doc *goquery.Document) (nextUrl string) {
 	doc.Find("div.pager a.navi").Each(func(i int, s *goquery.Selection) {
-		if val, ok := s.Attr("id"); ok {
-			if strings.HasPrefix(val, "next_pager_") {
-				if pageNextUrl, ok := s.Attr("href"); !ok {
-					log.Print("Invalid pager link")
-				} else {
-					nextUrl = config.defaultDomain + pageNextUrl
-				}
-			}
+		val, ok := s.Attr("id")
+		if !ok {
+			return
 		}
+
+		if !strings.HasPrefix(val, "next_pager_") {
+			return
+		}
+
+		pageNextUrl, ok := s.Attr("href")
+		if !ok {
+			log.Print("Invalid pager link")
+		}
+
+		nextUrl = config.defaultDomain + pageNextUrl
 	})
+
 	return
 }
 
