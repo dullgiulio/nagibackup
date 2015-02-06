@@ -18,6 +18,7 @@ type conf struct {
 	directory     string
 	url           string
 	verbose       bool
+	dryrun        bool
 	size          int
 	parallel      int
 	defaultDomain string
@@ -31,7 +32,7 @@ func downloadImage(url string) {
 	destination := path.Join(config.directory, path.Base(url))
 
 	if config.verbose {
-		log.Printf("Saving into %s", destination)
+		log.Print("Saving into ", destination)
 	}
 
 	out, err := os.Create(destination)
@@ -49,7 +50,7 @@ func downloadImage(url string) {
 	defer resp.Body.Close()
 
 	if config.verbose {
-		log.Printf("Downloading %s", url)
+		log.Print("Downloading ", url)
 	}
 
 	if _, err = io.Copy(out, resp.Body); err != nil {
@@ -61,7 +62,7 @@ func getActualImageUrl(url string) (image string) {
 	doc, err := goquery.NewDocument(url)
 	if err != nil {
 		log.Print("Error opening document for single image: ", err.Error())
-		return ""
+		return
 	}
 
 	doc.Find("div table").Each(func(i int, s *goquery.Selection) {
@@ -73,7 +74,7 @@ func getActualImageUrl(url string) (image string) {
 		}
 	})
 
-	return image
+	return
 }
 
 func downloadActualImage(url string, wg *sync.WaitGroup) {
@@ -121,14 +122,15 @@ func downloadImages(urls <-chan string, wg *sync.WaitGroup) {
 	}
 }
 
-func fetchAllImageUrls(url string, urls chan<- string, wg *sync.WaitGroup) {
+func printImages(urls <-chan string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	doc, err := goquery.NewDocument(config.url)
-	if err != nil {
-		log.Fatal("Error opening document with single image: ", err)
+	for url := range urls {
+		fmt.Printf("%s\n", url)
 	}
+}
 
+func extractImageUrls(urls chan<- string, doc *goquery.Document) {
 	doc.Find("div.imagelog p a").Each(func(i int, s *goquery.Selection) {
 		if val, ok := s.Attr("href"); !ok {
 			if config.verbose {
@@ -138,21 +140,68 @@ func fetchAllImageUrls(url string, urls chan<- string, wg *sync.WaitGroup) {
 			urls <- val
 		}
 	})
+}
 
-	close(urls)
+func extractNextUrl(doc *goquery.Document) (nextUrl string) {
+	doc.Find("div.pager a.navi").Each(func(i int, s *goquery.Selection) {
+		if val, ok := s.Attr("id"); ok {
+			if strings.HasPrefix(val, "next_pager_") {
+				if pageNextUrl, ok := s.Attr("href"); !ok {
+					log.Print("Invalid pager link")
+				} else {
+					nextUrl = config.defaultDomain + pageNextUrl
+				}
+			}
+		}
+	})
+	return
+}
+
+func fetchAllImageUrls(url string, urls chan<- string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer close(urls)
+
+	for url != "" {
+		if config.verbose {
+			log.Print("Fetching links from ", url)
+		}
+
+		doc, err := goquery.NewDocument(url)
+		if err != nil {
+			log.Fatal("Error opening document with single image: ", err)
+		}
+
+		extractImageUrls(urls, doc)
+
+		if nextUrl := extractNextUrl(doc); url == nextUrl {
+			break
+		} else {
+			url = nextUrl
+		}
+	}
 }
 
 func initDefaults() {
-	config.defaultDomain = "http://nagi.ee/"
+	config.defaultDomain = "http://nagi.ee"
 	//config.size = Original
 }
 
 func parseArgs() {
 	flag.IntVar(&config.parallel, "parallel", 4, "How many parallel downloads to perform; use zero to disable")
 	flag.BoolVar(&config.verbose, "verbose", false, "Be verbose about progress")
+	flag.BoolVar(&config.dryrun, "dry-run", false, "Only print what images would be downloaded")
 	flag.Parse()
 
 	args := flag.Args()
+
+	if config.dryrun {
+		if len(args) < 1 || args[0] == "" {
+			Usage()
+		}
+
+		config.url = args[0]
+		return
+	}
 
 	if len(args) < 2 {
 		Usage()
@@ -186,8 +235,12 @@ func startDownloads() {
 	wg.Add(2)
 
 	go fetchAllImageUrls(config.url, urls, &wg)
-	go downloadImages(urls, &wg)
 
+	if config.dryrun {
+		go printImages(urls, &wg)
+	} else {
+		go downloadImages(urls, &wg)
+	}
 	wg.Wait()
 }
 
@@ -201,7 +254,10 @@ func main() {
 	initDefaults()
 	parseArgs()
 
-	createDestinationDir()
+	if !config.dryrun {
+		createDestinationDir()
+	}
+
 	initParallelSemaphore()
 
 	startDownloads()
