@@ -56,6 +56,10 @@ func downloadImage(url string) {
 	if _, err = io.Copy(out, resp.Body); err != nil {
 		log.Print("Error in image download: ", err.Error())
 	}
+
+	if err := out.Sync(); err != nil {
+		log.Print("Error in image save: ", err.Error())
+	}
 }
 
 func getActualImageUrl(url string) (image string) {
